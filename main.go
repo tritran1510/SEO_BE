@@ -13,8 +13,9 @@ import (
 )
 
 func main() {
-	// Load .env.local file if it exists
-	_ = godotenv.Load(".env.local")
+	// Load base env first, then force local overrides.
+	_ = godotenv.Load(".env")
+	_ = godotenv.Overload(".env.local")
 
 	// Load configuration
 	cfg := config.Load()

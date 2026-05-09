@@ -12,6 +12,7 @@ type Config struct {
 }
 
 type DatabaseConfig struct {
+	URL      string
 	Host     string
 	Port     string
 	User     string
@@ -35,6 +36,8 @@ func Load() *Config {
 	if port == "" {
 		port = "8080"
 	}
+
+	dbURL := os.Getenv("DATABASE_URL")
 
 	dbPassword := os.Getenv("DB_PASSWORD")
 	if dbPassword == "" {
@@ -65,6 +68,7 @@ func Load() *Config {
 		Host: host,
 		Port: port,
 		Database: DatabaseConfig{
+			URL:      dbURL,
 			Host:     dbHost,
 			Port:     dbPort,
 			User:     dbUser,
