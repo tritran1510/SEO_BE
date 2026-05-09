@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 
+	"github.com/seo/backend/internal/repository"
 	"github.com/seo/backend/internal/service"
 )
 
@@ -52,6 +53,14 @@ func ReviewContent(w http.ResponseWriter, r *http.Request) {
 
 	// The review engine is pure business logic with no persistence dependency.
 	result := service.GenerateReview(request)
+	if err := repository.SaveReviewSubmission(request, result); err != nil {
+		writeJSON(w, http.StatusInternalServerError, Response{
+			Status:  "error",
+			Message: "Failed to save review data.",
+		})
+		return
+	}
+
 	writeJSON(w, http.StatusOK, Response{
 		Status:  "success",
 		Message: "SEO review generated successfully.",

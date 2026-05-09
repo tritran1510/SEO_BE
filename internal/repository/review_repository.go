@@ -1,6 +1,7 @@
 package repository
 
 import (
+	"encoding/json"
 	"math"
 
 	"github.com/seo/backend/internal/dto"
@@ -175,15 +176,39 @@ func GetReviewHistoryByArticleID(articleID, page, pageSize int) (*dto.ReviewHist
 	// Build DTOs
 	historyItems := make([]dto.ReviewHistoryItemDTO, 0, len(reviews))
 	for _, review := range reviews {
+		var history model.ReviewHistory
+		_ = DB.Where("review_id = ?", review.ID).
+			Order("created_at DESC").
+			First(&history).Error
+
+		recommendations := make([]string, 0)
+		if len(history.Recommendations) > 0 {
+			_ = json.Unmarshal(history.Recommendations, &recommendations)
+		}
+		checklistResults := make([]map[string]interface{}, 0)
+		if len(history.ChecklistChanges) > 0 {
+			_ = json.Unmarshal(history.ChecklistChanges, &checklistResults)
+		}
+
 		item := dto.ReviewHistoryItemDTO{
-			ReviewID:         review.ID,
-			CreatedAt:        review.CreatedAt,
-			OverallScore:     review.OverallScore,
-			SEOScore:         review.SEOScore,
-			ReadabilityScore: review.ReadabilityScore,
-			AdvancedScore:    review.AdvancedScore,
-			Status:           &review.Status,
-			Notes:            review.Notes,
+			ReviewID:                   review.ID,
+			CreatedAt:                  review.CreatedAt,
+			OverallScore:               review.OverallScore,
+			SEOScore:                   review.SEOScore,
+			ReadabilityScore:           review.ReadabilityScore,
+			AdvancedScore:              review.AdvancedScore,
+			Status:                     &review.Status,
+			Notes:                      review.Notes,
+			ArticleContent:             &article.Content,
+			Summary:                    article.Summary,
+			DetailedInformation:        article.DetailedInformation,
+			SEOTitle:                   seoMetadata.SEOTitle,
+			MetaDescription:            seoMetadata.MetaDescription,
+			PrimaryKeyword:             seoMetadata.PrimaryKeyword,
+			SecondaryKeywords:          seoMetadata.SecondaryKeywords,
+			Synonyms:                   seoMetadata.Synonyms,
+			ImprovementRecommendations: recommendations,
+			ChecklistResults:           checklistResults,
 		}
 		historyItems = append(historyItems, item)
 	}

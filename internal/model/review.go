@@ -8,7 +8,7 @@ import (
 
 // SEOReview represents a single review of an article
 type SEOReview struct {
-	ID                  int              `gorm:"primaryKey" json:"id"`
+	ID                  string           `gorm:"type:uuid;default:uuid_generate_v4();primaryKey" json:"id"`
 	ArticleID           int              `gorm:"index;foreignKey:ArticleID" json:"article_id"`
 	OverallScore        *int             `json:"overall_score"`
 	SEOScore            *int             `json:"seo_score"`
@@ -46,7 +46,7 @@ type ReviewChecklistItem struct {
 // ReviewChecklistResult stores the result of a single checklist item for a review
 type ReviewChecklistResult struct {
 	ID              int            `gorm:"primaryKey" json:"id"`
-	ReviewID        int            `gorm:"index;foreignKey:ReviewID" json:"review_id"`
+	ReviewID        string         `gorm:"type:uuid;index;foreignKey:ReviewID" json:"review_id"`
 	ChecklistItemID int            `gorm:"foreignKey:ChecklistItemID" json:"checklist_item_id"`
 	Result          *string        `json:"result"` // passed, failed, warning
 	Status          *string        `json:"status"` // success, needs_improvement, failed
@@ -62,7 +62,7 @@ type ReviewChecklistResult struct {
 // ReviewFieldFeedback stores feedback for specific article fields
 type ReviewFieldFeedback struct {
 	ID        int            `gorm:"primaryKey" json:"id"`
-	ReviewID  int            `gorm:"index;foreignKey:ReviewID;uniqueIndex:idx_review_field,composite:review_id,field_name" json:"review_id"`
+	ReviewID  string         `gorm:"type:uuid;index;foreignKey:ReviewID;uniqueIndex:idx_review_field,composite:review_id,field_name" json:"review_id"`
 	FieldName string         `gorm:"uniqueIndex:idx_review_field,composite:review_id,field_name" json:"field_name"`
 	FieldLabel *string       `json:"field_label"`
 	Messages  datatypes.JSON `gorm:"type:jsonb" json:"messages"` // JSON array of feedback strings
@@ -75,7 +75,7 @@ type ReviewFieldFeedback struct {
 // ImprovementRecommendation stores actionable recommendations from reviews
 type ImprovementRecommendation struct {
 	ID              int        `gorm:"primaryKey" json:"id"`
-	ReviewID        int        `gorm:"index;foreignKey:ReviewID" json:"review_id"`
+	ReviewID        string     `gorm:"type:uuid;index;foreignKey:ReviewID" json:"review_id"`
 	Recommendation  string     `json:"recommendation"`
 	Priority        string     `gorm:"default:'medium'" json:"priority"` // low, medium, high, critical
 	EstimatedImpact *string    `json:"estimated_impact"`  // low, medium, high
@@ -90,7 +90,7 @@ type ImprovementRecommendation struct {
 // ReviewHistory stores complete revision history
 type ReviewHistory struct {
 	ID                       int            `gorm:"primaryKey" json:"id"`
-	ReviewID                 int            `gorm:"index;foreignKey:ReviewID" json:"review_id"`
+	ReviewID                 string         `gorm:"type:uuid;index;foreignKey:ReviewID" json:"review_id"`
 	ArticleID                int            `gorm:"index;foreignKey:ArticleID" json:"article_id"`
 	Action                   string         `gorm:"index" json:"action"` // created, updated, scored, finalized, archived, improved
 	Notes                    *string        `json:"notes"`
@@ -117,7 +117,7 @@ type ArticleReviewSummary struct {
 	ID                     int       `gorm:"primaryKey" json:"id"`
 	ArticleID              int       `gorm:"uniqueIndex;foreignKey:ArticleID" json:"article_id"`
 	TotalReviews           int       `gorm:"default:0" json:"total_reviews"`
-	LatestReviewID         *int      `gorm:"foreignKey:LatestReviewID" json:"latest_review_id"`
+	LatestReviewID         *string   `gorm:"type:uuid;foreignKey:LatestReviewID" json:"latest_review_id"`
 	LatestOverallScore     *int      `json:"latest_overall_score"`
 	LatestSEOScore         *int      `json:"latest_seo_score"`
 	LatestReadabilityScore *int      `json:"latest_readability_score"`
