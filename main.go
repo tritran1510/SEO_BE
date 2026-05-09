@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"os"
 
 	"github.com/joho/godotenv"
 	"github.com/seo/backend/internal/config"
@@ -13,9 +14,12 @@ import (
 )
 
 func main() {
-	// Load base env first, then force local overrides.
+	// Always load .env (deployment source of truth).
 	_ = godotenv.Load(".env")
-	_ = godotenv.Overload(".env.local")
+	// Allow local overrides only outside production.
+	if os.Getenv("ENV") != "production" {
+		_ = godotenv.Overload(".env.local")
+	}
 
 	// Load configuration
 	cfg := config.Load()
