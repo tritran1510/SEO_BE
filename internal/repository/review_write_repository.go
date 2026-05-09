@@ -1,6 +1,7 @@
 package repository
 
 import (
+	"encoding/json"
 	"errors"
 	"regexp"
 	"strings"
@@ -8,6 +9,7 @@ import (
 
 	"github.com/seo/backend/internal/model"
 	"github.com/seo/backend/internal/service"
+	"gorm.io/datatypes"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 )
@@ -40,6 +42,18 @@ func SaveReviewSubmission(req service.ReviewRequest, result service.ReviewResult
 		}
 
 		if err := replaceRecommendations(tx, review.ID, result.ImprovementRecommendations); err != nil {
+			return err
+		}
+
+		if err := saveChecklistResults(tx, review.ID, result.ChecklistResults); err != nil {
+			return err
+		}
+
+		if err := saveFieldFeedback(tx, review.ID, result.FieldFeedback); err != nil {
+			return err
+		}
+
+		if err := createReviewHistory(tx, review.ID, article.ID, req, result); err != nil {
 			return err
 		}
 
@@ -198,6 +212,127 @@ func replaceRecommendations(tx *gorm.DB, reviewID string, recommendations []stri
 	return nil
 }
 
+func saveChecklistResults(tx *gorm.DB, reviewID string, checklist []service.ChecklistResult) error {
+	for i, item := range checklist {
+		checkCode := strings.TrimSpace(item.Code)
+		checkName := strings.TrimSpace(item.CheckName)
+		checkGroup := strings.TrimSpace(item.Group)
+		defaultReason := stringPtrOrNil(item.Reason)
+		defaultImprovement := stringPtrOrNil(item.Improvement)
+
+		checklistItem := model.ReviewChecklistItem{
+			CheckCode:           checkCode,
+			CheckName:           checkName,
+			CheckGroup:          checkGroup,
+			DefaultReason:       defaultReason,
+			DefaultImprovement:  defaultImprovement,
+			SortOrder:           i,
+			IsActive:            true,
+		}
+
+		if err := tx.Clauses(clause.OnConflict{
+			Columns: []clause.Column{{Name: "check_code"}},
+			DoUpdates: clause.AssignmentColumns([]string{
+				"check_name",
+				"check_group",
+				"default_reason",
+				"default_improvement",
+				"sort_order",
+				"is_active",
+			}),
+		}).Create(&checklistItem).Error; err != nil {
+			return err
+		}
+		if err := tx.Where("check_code = ?", checkCode).First(&checklistItem).Error; err != nil {
+			return err
+		}
+
+		affectedFieldsJSON, err := toJSON(item.AffectedFields)
+		if err != nil {
+			return err
+		}
+
+		resultValue := normalizeChecklistResult(item.Result)
+		statusValue := normalizeChecklistStatus(item.Status)
+		row := model.ReviewChecklistResult{
+			ReviewID:        reviewID,
+			ChecklistItemID: checklistItem.ID,
+			Result:          &resultValue,
+			Status:          &statusValue,
+			Reason:          stringPtrOrNil(item.Reason),
+			Improvement:     stringPtrOrNil(item.Improvement),
+			AffectedFields:  affectedFieldsJSON,
+		}
+
+		if err := tx.Create(&row).Error; err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func saveFieldFeedback(tx *gorm.DB, reviewID string, feedback []service.FieldFeedback) error {
+	for _, item := range feedback {
+		messagesJSON, err := toJSON(item.Messages)
+		if err != nil {
+			return err
+		}
+
+		fieldFeedback := model.ReviewFieldFeedback{
+			ReviewID:   reviewID,
+			FieldName:  strings.TrimSpace(item.Field),
+			FieldLabel: stringPtrOrNil(item.Label),
+			Messages:   messagesJSON,
+			Severity:   stringPtr("warning"),
+		}
+		if err := tx.Create(&fieldFeedback).Error; err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func createReviewHistory(tx *gorm.DB, reviewID string, articleID int, req service.ReviewRequest, result service.ReviewResult) error {
+	overall := result.OverallScore
+	seo := result.SEOScore
+	readability := result.ReadabilityScore
+	advanced := result.AdvancedScore
+	status := strings.TrimSpace(result.Status)
+
+	wordCount := len(strings.Fields(req.ArticleContent))
+	internalLinks, outboundLinks := countLinksForHistory(req.ArticleContent, req.PermanentLink)
+	keywordDensity := computeKeywordDensity(req.ArticleContent, req.KeywordSet.PrimaryKeyword)
+
+	checklistJSON, err := toJSON(result.ChecklistResults)
+	if err != nil {
+		return err
+	}
+	recommendationsJSON, err := toJSON(result.ImprovementRecommendations)
+	if err != nil {
+		return err
+	}
+
+	history := model.ReviewHistory{
+		ReviewID:                 reviewID,
+		ArticleID:                articleID,
+		Action:                   "scored",
+		SEOScoreSnapshot:         &seo,
+		ReadabilityScoreSnapshot: &readability,
+		AdvancedScoreSnapshot:    &advanced,
+		OverallScoreSnapshot:     &overall,
+		StatusSnapshot:           &status,
+		PrimaryKeywordSnapshot:   stringPtrOrNil(req.KeywordSet.PrimaryKeyword),
+		KeywordDensitySnapshot:   &keywordDensity,
+		WordCountSnapshot:        &wordCount,
+		InternalLinksSnapshot:    &internalLinks,
+		OutboundLinksSnapshot:    &outboundLinks,
+		ChecklistChanges:         checklistJSON,
+		Recommendations:          recommendationsJSON,
+	}
+
+	return tx.Create(&history).Error
+}
+
 func upsertReviewSummary(tx *gorm.DB, articleID int, reviewID string, result service.ReviewResult) error {
 	var summary model.ArticleReviewSummary
 	err := tx.Where("article_id = ?", articleID).First(&summary).Error
@@ -260,6 +395,80 @@ func upsertReviewSummary(tx *gorm.DB, articleID int, reviewID string, result ser
 	summary.LastReviewedAt = &now
 
 	return tx.Save(&summary).Error
+}
+
+func normalizeChecklistResult(v string) string {
+	switch strings.ToLower(strings.TrimSpace(v)) {
+	case "pass", "passed":
+		return "passed"
+	case "warning":
+		return "warning"
+	default:
+		return "failed"
+	}
+}
+
+func normalizeChecklistStatus(v string) string {
+	switch strings.ToLower(strings.TrimSpace(v)) {
+	case "good", "success":
+		return "success"
+	default:
+		return "needs_improvement"
+	}
+}
+
+func countLinksForHistory(content string, permanentLink string) (int, int) {
+	baseHost := extractHostForHistory(permanentLink)
+	internalLinks := 0
+	outboundLinks := 0
+
+	linkPattern := regexp.MustCompile(`https?://[^\s)]+`)
+	for _, link := range linkPattern.FindAllString(content, -1) {
+		linkHost := extractHostForHistory(link)
+		switch {
+		case linkHost == "":
+			continue
+		case baseHost != "" && linkHost == baseHost:
+			internalLinks++
+		default:
+			outboundLinks++
+		}
+	}
+	return internalLinks, outboundLinks
+}
+
+func extractHostForHistory(rawURL string) string {
+	value := strings.ToLower(strings.TrimSpace(rawURL))
+	value = strings.TrimPrefix(value, "https://")
+	value = strings.TrimPrefix(value, "http://")
+	if slash := strings.Index(value, "/"); slash >= 0 {
+		value = value[:slash]
+	}
+	if colon := strings.Index(value, ":"); colon >= 0 {
+		value = value[:colon]
+	}
+	return strings.TrimSpace(value)
+}
+
+func computeKeywordDensity(content string, primaryKeyword string) float32 {
+	words := len(strings.Fields(content))
+	if words == 0 {
+		return 0
+	}
+	keyword := strings.TrimSpace(strings.ToLower(primaryKeyword))
+	if keyword == "" {
+		return 0
+	}
+	mentions := strings.Count(strings.ToLower(content), keyword)
+	return float32(mentions) / float32(words) * 100
+}
+
+func toJSON(v interface{}) (datatypes.JSON, error) {
+	raw, err := json.Marshal(v)
+	if err != nil {
+		return nil, err
+	}
+	return datatypes.JSON(raw), nil
 }
 
 func stringPtrOrNil(value string) *string {
