@@ -11,7 +11,7 @@ type ReviewListItemDTO struct {
 	Slug                  string     `json:"slug"`
 	PermanentLink         string     `json:"permanent_link"`
 	PrimaryKeyword        *string    `json:"primary_keyword"`
-	LatestReviewID        *int       `json:"latest_review_id"`
+	LatestReviewID        *string    `json:"latest_review_id"`
 	LatestOverallScore    *int       `json:"latest_overall_score"`
 	LatestSEOScore        *int       `json:"latest_seo_score"`
 	LatestReadabilityScore *int      `json:"latest_readability_score"`
@@ -27,7 +27,7 @@ type ReviewListItemDTO struct {
 
 // ReviewHistoryItemDTO represents a single review in the review history
 type ReviewHistoryItemDTO struct {
-	ReviewID              int        `json:"review_id"`
+	ReviewID              string     `json:"review_id"`
 	CreatedAt             time.Time  `json:"created_at"`
 	OverallScore          *int       `json:"overall_score"`
 	SEOScore              *int       `json:"seo_score"`
