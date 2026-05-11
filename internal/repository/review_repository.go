@@ -165,10 +165,6 @@ func GetReviewHistoryByArticleID(articleID, page, pageSize int) (*dto.ReviewHist
 	var seoMetadata model.ArticleSEOMetadata
 	DB.Where("article_id = ?", articleID).First(&seoMetadata)
 
-	// Get metrics for the article
-	var metrics model.ContentMetrics
-	DB.Where("article_id = ?", articleID).First(&metrics)
-
 	// Get article review summary
 	var summary model.ArticleReviewSummary
 	DB.Where("article_id = ?", articleID).First(&summary)
@@ -190,6 +186,19 @@ func GetReviewHistoryByArticleID(articleID, page, pageSize int) (*dto.ReviewHist
 			_ = json.Unmarshal(history.ChecklistChanges, &checklistResults)
 		}
 
+		articleContent := &article.Content
+		if history.ArticleContentSnapshot != nil {
+			articleContent = history.ArticleContentSnapshot
+		}
+		summaryText := article.Summary
+		if history.SummarySnapshot != nil {
+			summaryText = history.SummarySnapshot
+		}
+		detailedInfo := article.DetailedInformation
+		if history.DetailedInfoSnapshot != nil {
+			detailedInfo = history.DetailedInfoSnapshot
+		}
+
 		item := dto.ReviewHistoryItemDTO{
 			ReviewID:                   review.ID,
 			CreatedAt:                  review.CreatedAt,
@@ -199,9 +208,9 @@ func GetReviewHistoryByArticleID(articleID, page, pageSize int) (*dto.ReviewHist
 			AdvancedScore:              review.AdvancedScore,
 			Status:                     &review.Status,
 			Notes:                      review.Notes,
-			ArticleContent:             &article.Content,
-			Summary:                    article.Summary,
-			DetailedInformation:        article.DetailedInformation,
+			ArticleContent:             articleContent,
+			Summary:                    summaryText,
+			DetailedInformation:        detailedInfo,
 			SEOTitle:                   seoMetadata.SEOTitle,
 			MetaDescription:            seoMetadata.MetaDescription,
 			PrimaryKeyword:             seoMetadata.PrimaryKeyword,

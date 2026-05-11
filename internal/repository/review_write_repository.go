@@ -3,6 +3,7 @@ package repository
 import (
 	"encoding/json"
 	"errors"
+	"html"
 	"regexp"
 	"strings"
 	"time"
@@ -15,6 +16,7 @@ import (
 )
 
 var sentenceSplitPattern = regexp.MustCompile(`[.!?]+`)
+var htmlTagPattern = regexp.MustCompile(`(?s)<[^>]+>`)
 
 // SaveReviewSubmission persists incoming review input and generated result.
 func SaveReviewSubmission(req service.ReviewRequest, result service.ReviewResult) error {
@@ -141,9 +143,10 @@ func replaceArticleImages(tx *gorm.DB, articleID int, images []service.ImportedI
 }
 
 func upsertContentMetrics(tx *gorm.DB, articleID int, req service.ReviewRequest) error {
-	wordCount := len(strings.Fields(req.ArticleContent))
+	normalizedContent := normalizeContentForMetrics(req.ArticleContent)
+	wordCount := len(strings.Fields(normalizedContent))
 	sentenceCount := 0
-	for _, sentence := range sentenceSplitPattern.Split(req.ArticleContent, -1) {
+	for _, sentence := range sentenceSplitPattern.Split(normalizedContent, -1) {
 		if strings.TrimSpace(sentence) != "" {
 			sentenceCount++
 		}
@@ -152,7 +155,7 @@ func upsertContentMetrics(tx *gorm.DB, articleID int, req service.ReviewRequest)
 	keywordDensity := float32(0)
 	keyword := strings.TrimSpace(strings.ToLower(req.KeywordSet.PrimaryKeyword))
 	if wordCount > 0 && keyword != "" {
-		lowered := strings.ToLower(req.ArticleContent)
+		lowered := strings.ToLower(normalizedContent)
 		mentions := strings.Count(lowered, keyword)
 		keywordDensity = float32(mentions) / float32(wordCount) * 100
 	}
@@ -221,13 +224,13 @@ func saveChecklistResults(tx *gorm.DB, reviewID string, checklist []service.Chec
 		defaultImprovement := stringPtrOrNil(item.Improvement)
 
 		checklistItem := model.ReviewChecklistItem{
-			CheckCode:           checkCode,
-			CheckName:           checkName,
-			CheckGroup:          checkGroup,
-			DefaultReason:       defaultReason,
-			DefaultImprovement:  defaultImprovement,
-			SortOrder:           i,
-			IsActive:            true,
+			CheckCode:          checkCode,
+			CheckName:          checkName,
+			CheckGroup:         checkGroup,
+			DefaultReason:      defaultReason,
+			DefaultImprovement: defaultImprovement,
+			SortOrder:          i,
+			IsActive:           true,
 		}
 
 		if err := tx.Clauses(clause.OnConflict{
@@ -299,9 +302,10 @@ func createReviewHistory(tx *gorm.DB, reviewID string, articleID int, req servic
 	advanced := result.AdvancedScore
 	status := strings.TrimSpace(result.Status)
 
-	wordCount := len(strings.Fields(req.ArticleContent))
+	normalizedContent := normalizeContentForMetrics(req.ArticleContent)
+	wordCount := len(strings.Fields(normalizedContent))
 	internalLinks, outboundLinks := countLinksForHistory(req.ArticleContent, req.PermanentLink)
-	keywordDensity := computeKeywordDensity(req.ArticleContent, req.KeywordSet.PrimaryKeyword)
+	keywordDensity := computeKeywordDensity(normalizedContent, req.KeywordSet.PrimaryKeyword)
 
 	checklistJSON, err := toJSON(result.ChecklistResults)
 	if err != nil {
@@ -322,6 +326,9 @@ func createReviewHistory(tx *gorm.DB, reviewID string, articleID int, req servic
 		OverallScoreSnapshot:     &overall,
 		StatusSnapshot:           &status,
 		PrimaryKeywordSnapshot:   stringPtrOrNil(req.KeywordSet.PrimaryKeyword),
+		ArticleContentSnapshot:   stringPtrOrNil(req.ArticleContent),
+		SummarySnapshot:          stringPtrOrNil(req.Summary),
+		DetailedInfoSnapshot:     stringPtrOrNil(req.DetailedInformation),
 		KeywordDensitySnapshot:   &keywordDensity,
 		WordCountSnapshot:        &wordCount,
 		InternalLinksSnapshot:    &internalLinks,
@@ -461,6 +468,25 @@ func computeKeywordDensity(content string, primaryKeyword string) float32 {
 	}
 	mentions := strings.Count(strings.ToLower(content), keyword)
 	return float32(mentions) / float32(words) * 100
+}
+
+func normalizeContentForMetrics(content string) string {
+	trimmed := strings.TrimSpace(content)
+	if trimmed == "" {
+		return ""
+	}
+
+	normalized := strings.NewReplacer(
+		"</p>", "\n",
+		"</div>", "\n",
+		"</li>", "\n",
+		"<br>", "\n",
+		"<br/>", "\n",
+		"<br />", "\n",
+	).Replace(trimmed)
+	normalized = htmlTagPattern.ReplaceAllString(normalized, " ")
+	normalized = html.UnescapeString(normalized)
+	return strings.TrimSpace(normalized)
 }
 
 func toJSON(v interface{}) (datatypes.JSON, error) {

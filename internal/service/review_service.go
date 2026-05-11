@@ -2,6 +2,7 @@ package service
 
 import (
 	"errors"
+	"html"
 	"net/url"
 	"regexp"
 	"slices"
@@ -71,10 +72,12 @@ type contentStats struct {
 }
 
 var (
-	headingPattern = regexp.MustCompile(`(?m)^#+\s.*$`)
-	linkPattern    = regexp.MustCompile(`https?://[^\s)]+`)
-	passivePattern = regexp.MustCompile(`\b(is|are|was|were|be|been|being)\s+\w+ed\b`)
-	fieldLabels    = map[string]string{
+	headingPattern     = regexp.MustCompile(`(?m)^#+\s.*$`)
+	htmlHeadingPattern = regexp.MustCompile(`(?is)<h[1-6][^>]*>(.*?)</h[1-6]>`)
+	htmlTagPattern     = regexp.MustCompile(`(?s)<[^>]+>`)
+	linkPattern        = regexp.MustCompile(`https?://[^\s)]+`)
+	passivePattern     = regexp.MustCompile(`\b(is|are|was|were|be|been|being)\s+\w+ed\b`)
+	fieldLabels        = map[string]string{
 		"articleTitle":        "Article Title",
 		"permanentLink":       "Permanent Link",
 		"articleContent":      "Article Content",
@@ -146,12 +149,16 @@ func ValidateReviewRequest(input ReviewRequest) error {
 }
 
 func GenerateReview(input ReviewRequest) ReviewResult {
+	normalizedContent := normalizeContentForAnalysis(input.ArticleContent)
+	normalizedSummary := normalizeContentForAnalysis(input.Summary)
+	normalizedDetail := normalizeContentForAnalysis(input.DetailedInformation)
+
 	primaryKeyword := strings.TrimSpace(input.KeywordSet.PrimaryKeyword)
 	secondaryKeywords := splitKeywords(input.KeywordSet.SecondaryKeywords)
 	synonyms := splitKeywords(input.KeywordSet.Synonyms)
-	stats := buildContentStats(input.ArticleContent)
-	intro := firstIntroSegment(input.ArticleContent)
-	headings := headingPattern.FindAllString(input.ArticleContent, -1)
+	stats := buildContentStats(normalizedContent)
+	intro := firstIntroSegment(normalizedContent)
+	headings := extractHeadings(input.ArticleContent, normalizedContent)
 	internalLinks, outboundLinks := countLinks(input.ArticleContent, input.PermanentLink)
 
 	primaryInTitle := containsPhrase(input.ArticleTitle, primaryKeyword)
@@ -159,10 +166,10 @@ func GenerateReview(input ReviewRequest) ReviewResult {
 	primaryInSlug := containsPhrase(input.KeywordSet.Slug, strings.ReplaceAll(primaryKeyword, " ", "-"))
 	primaryInPermanentLink := containsPhrase(input.PermanentLink, input.KeywordSet.Slug)
 	primaryInDescription := containsPhrase(input.KeywordSet.MetaDescription, primaryKeyword)
-	primaryInSummary := containsPhrase(input.Summary, primaryKeyword)
+	primaryInSummary := containsPhrase(normalizedSummary, primaryKeyword)
 	primaryInIntro := containsPhrase(intro, primaryKeyword)
 	primaryInHeadings := containsPhrase(strings.Join(headings, " "), primaryKeyword)
-	primaryMentions := countMatches(input.ArticleContent, primaryKeyword)
+	primaryMentions := countMatches(normalizedContent, primaryKeyword)
 	keywordDensity := 0.0
 	if len(stats.Words) > 0 {
 		keywordDensity = float64(primaryMentions) / float64(len(stats.Words)) * 100
@@ -186,19 +193,19 @@ func GenerateReview(input ReviewRequest) ReviewResult {
 	}
 
 	advancedChecks := []ChecklistResult{
-		makeItem("detailedInformationProvidesContext", "Advanced", "Detailed information provides useful context", len(strings.TrimSpace(input.DetailedInformation)) >= 40, "Detailed information helps the reviewer understand the article context.", "Add more supporting detail so the review can understand the article context more clearly.", []string{"detailedInformation"}),
-		makeItem("secondaryKeywordsDistributed", "Advanced", "Secondary keywords are distributed naturally", len(secondaryKeywords) > 0 && countAnyPhraseMatches(input.ArticleContent, secondaryKeywords) >= 1, "Supporting keyphrases should appear naturally across the content.", "Use one or two secondary keywords in headings or supporting paragraphs where they fit naturally.", []string{"secondaryKeywords", "articleContent"}),
-		makeItem("synonymSupportPresent", "Advanced", "Synonym support is present", len(synonyms) > 0 && countAnyPhraseMatches(input.ArticleContent, synonyms) >= 1, "Synonyms help broaden topical relevance and avoid repetition.", "Introduce one or two synonym phrases in the body content when they match the meaning.", []string{"synonyms", "articleContent"}),
-		makeItem("topicConsistencyMaintained", "Advanced", "Topic consistency is maintained", containsPhrase(input.DetailedInformation, primaryKeyword) || containsPhrase(input.Summary, primaryKeyword) || primaryInTitle, "The supporting context should stay closely tied to the target topic.", "Use the detailed information and summary fields to strengthen topic framing and search intent alignment.", []string{"detailedInformation", "summary", "primaryKeyword"}),
+		makeItem("detailedInformationProvidesContext", "Advanced", "Detailed information provides useful context", len(strings.TrimSpace(normalizedDetail)) >= 40, "Detailed information helps the reviewer understand the article context.", "Add more supporting detail so the review can understand the article context more clearly.", []string{"detailedInformation"}),
+		makeItem("secondaryKeywordsDistributed", "Advanced", "Secondary keywords are distributed naturally", len(secondaryKeywords) > 0 && countAnyPhraseMatches(normalizedContent, secondaryKeywords) >= 1, "Supporting keyphrases should appear naturally across the content.", "Use one or two secondary keywords in headings or supporting paragraphs where they fit naturally.", []string{"secondaryKeywords", "articleContent"}),
+		makeItem("synonymSupportPresent", "Advanced", "Synonym support is present", len(synonyms) > 0 && countAnyPhraseMatches(normalizedContent, synonyms) >= 1, "Synonyms help broaden topical relevance and avoid repetition.", "Introduce one or two synonym phrases in the body content when they match the meaning.", []string{"synonyms", "articleContent"}),
+		makeItem("topicConsistencyMaintained", "Advanced", "Topic consistency is maintained", containsPhrase(normalizedDetail, primaryKeyword) || containsPhrase(normalizedSummary, primaryKeyword) || primaryInTitle, "The supporting context should stay closely tied to the target topic.", "Use the detailed information and summary fields to strengthen topic framing and search intent alignment.", []string{"detailedInformation", "summary", "primaryKeyword"}),
 	}
 
 	passiveRatio := estimatePassiveVoiceRatio(stats.Sentences)
 	repeatedStartsRatio := estimateRepeatedSentenceStarts(stats.Sentences)
-	transitionCount := countAnyPhraseMatches(input.ArticleContent, transitionWords)
+	transitionCount := countAnyPhraseMatches(normalizedContent, transitionWords)
 
 	readabilityChecks := []ChecklistResult{
 		makeItem("sentenceLengthManageable", "Readability", "Sentence length is manageable", stats.AverageSentenceLength > 0 && stats.AverageSentenceLength <= 22, "Average sentence length should stay readable for editors and readers.", "Break longer sentences into shorter ideas to improve scanability.", []string{"articleContent"}),
-		makeItem("paragraphFlowScannable", "Readability", "Paragraph flow is easy to scan", paragraphsAreScannable(input.ArticleContent), "Dense text blocks make the article harder to scan.", "Split long paragraphs into shorter sections with clearer pacing.", []string{"articleContent"}),
+		makeItem("paragraphFlowScannable", "Readability", "Paragraph flow is easy to scan", paragraphsAreScannable(normalizedContent), "Dense text blocks make the article harder to scan.", "Split long paragraphs into shorter sections with clearer pacing.", []string{"articleContent"}),
 		makeItem("headingDistributionExists", "Readability", "Heading distribution exists", len(headings) >= 2, "Subheadings make longer content easier to navigate.", "Add subheadings to improve navigation and keyword distribution.", []string{"articleContent"}),
 		makeItem("transitionWordsSupportFlow", "Readability", "Transition words support flow", transitionCount >= 2, "Transition words help readers follow the logic between ideas.", "Add a few more transition phrases so the article flows more naturally.", []string{"articleContent"}),
 		makeItem("passiveVoiceLimited", "Readability", "Passive voice usage stays limited", passiveRatio <= 0.2, "Too much passive voice can make content feel indirect or harder to follow.", "Rewrite some passive constructions in a more direct active voice.", []string{"articleContent"}),
@@ -246,6 +253,43 @@ func GenerateReview(input ReviewRequest) ReviewResult {
 		FieldsNeedingImprovement:   fieldsNeedingImprovement,
 		FieldFeedback:              fieldFeedback,
 	}
+}
+
+func normalizeContentForAnalysis(content string) string {
+	trimmed := strings.TrimSpace(content)
+	if trimmed == "" {
+		return ""
+	}
+
+	normalized := strings.NewReplacer(
+		"</p>", "\n",
+		"</div>", "\n",
+		"</li>", "\n",
+		"<br>", "\n",
+		"<br/>", "\n",
+		"<br />", "\n",
+	).Replace(trimmed)
+	normalized = htmlTagPattern.ReplaceAllString(normalized, " ")
+	normalized = html.UnescapeString(normalized)
+	return strings.TrimSpace(normalized)
+}
+
+func extractHeadings(rawContent string, normalizedContent string) []string {
+	markdownHeadings := headingPattern.FindAllString(normalizedContent, -1)
+	htmlHeadingsRaw := htmlHeadingPattern.FindAllStringSubmatch(rawContent, -1)
+
+	htmlHeadings := make([]string, 0, len(htmlHeadingsRaw))
+	for _, groups := range htmlHeadingsRaw {
+		if len(groups) < 2 {
+			continue
+		}
+		headingText := normalizeContentForAnalysis(groups[1])
+		if headingText != "" {
+			htmlHeadings = append(htmlHeadings, headingText)
+		}
+	}
+
+	return append(markdownHeadings, htmlHeadings...)
 }
 
 func makeItem(code string, group string, checkName string, passed bool, reason string, improvement string, affectedFields []string) ChecklistResult {
