@@ -2,6 +2,7 @@ package service
 
 import (
 	"errors"
+	"html"
 	"net/url"
 	"regexp"
 	"slices"
@@ -19,10 +20,14 @@ type KeywordSet struct {
 }
 
 type ImportedImage struct {
-	ID       string `json:"id"`
-	Name     string `json:"name"`
-	MimeType string `json:"mimeType"`
-	DataURL  string `json:"dataUrl"`
+	ID          string `json:"id"`
+	Name        string `json:"name"`
+	MimeType    string `json:"mimeType"`
+	DataURL     string `json:"dataUrl"`
+	AltText     string `json:"altText"`
+	Title       string `json:"title"`
+	Caption     string `json:"caption"`
+	Description string `json:"description"`
 }
 
 type ReviewRequest struct {
@@ -71,10 +76,14 @@ type contentStats struct {
 }
 
 var (
-	headingPattern = regexp.MustCompile(`(?m)^#+\s.*$`)
-	linkPattern    = regexp.MustCompile(`https?://[^\s)]+`)
-	passivePattern = regexp.MustCompile(`\b(is|are|was|were|be|been|being)\s+\w+ed\b`)
-	fieldLabels    = map[string]string{
+	headingPattern     = regexp.MustCompile(`(?m)^#+\s.*$`)
+	htmlHeadingPattern = regexp.MustCompile(`(?is)<h[1-6][^>]*>(.*?)</h[1-6]>`)
+	htmlTagPattern     = regexp.MustCompile(`(?s)<[^>]+>`)
+	linkPattern        = regexp.MustCompile(`https?://[^\s)]+`)
+	passivePattern     = regexp.MustCompile(`\b(is|are|was|were|be|been|being)\s+\w+ed\b`)
+	wordPattern        = regexp.MustCompile(`[a-zA-Z0-9À-ỹ]+`)
+	vietnamesePattern  = regexp.MustCompile(`[ăâđêôơưĂÂĐÊÔƠƯà-ỹÀ-Ỹ]`)
+	fieldLabels        = map[string]string{
 		"articleTitle":        "Article Title",
 		"permanentLink":       "Permanent Link",
 		"articleContent":      "Article Content",
@@ -93,9 +102,13 @@ var (
 		"detailedInformation", "summary", "seoTitle", "slug",
 		"metaDescription", "primaryKeyword", "secondaryKeywords", "synonyms",
 	}
-	transitionWords = []string{
+	transitionWordsEN = []string{
 		"however", "therefore", "moreover", "meanwhile", "in addition",
 		"for example", "as a result", "in contrast", "first", "second", "finally",
+	}
+	transitionWordsVI = []string{
+		"tuy nhiên", "do đó", "ngoài ra", "đồng thời", "ví dụ",
+		"mặt khác", "cuối cùng", "trước hết", "thứ nhất", "thứ hai", "vì vậy",
 	}
 )
 
@@ -146,27 +159,33 @@ func ValidateReviewRequest(input ReviewRequest) error {
 }
 
 func GenerateReview(input ReviewRequest) ReviewResult {
+	normalizedContent := normalizeContentForAnalysis(input.ArticleContent)
+	normalizedSummary := normalizeContentForAnalysis(input.Summary)
+	normalizedDetail := normalizeContentForAnalysis(input.DetailedInformation)
+
 	primaryKeyword := strings.TrimSpace(input.KeywordSet.PrimaryKeyword)
 	secondaryKeywords := splitKeywords(input.KeywordSet.SecondaryKeywords)
 	synonyms := splitKeywords(input.KeywordSet.Synonyms)
-	stats := buildContentStats(input.ArticleContent)
-	intro := firstIntroSegment(input.ArticleContent)
-	headings := headingPattern.FindAllString(input.ArticleContent, -1)
+	stats := buildContentStats(normalizedContent)
+	intro := firstIntroSegment(normalizedContent)
+	headings := extractHeadings(input.ArticleContent, normalizedContent)
 	internalLinks, outboundLinks := countLinks(input.ArticleContent, input.PermanentLink)
 
-	primaryInTitle := containsPhrase(input.ArticleTitle, primaryKeyword)
-	primaryInSEOTitle := containsPhrase(input.KeywordSet.SEOTitle, primaryKeyword)
-	primaryInSlug := containsPhrase(input.KeywordSet.Slug, strings.ReplaceAll(primaryKeyword, " ", "-"))
-	primaryInPermanentLink := containsPhrase(input.PermanentLink, input.KeywordSet.Slug)
-	primaryInDescription := containsPhrase(input.KeywordSet.MetaDescription, primaryKeyword)
-	primaryInSummary := containsPhrase(input.Summary, primaryKeyword)
-	primaryInIntro := containsPhrase(intro, primaryKeyword)
-	primaryInHeadings := containsPhrase(strings.Join(headings, " "), primaryKeyword)
-	primaryMentions := countMatches(input.ArticleContent, primaryKeyword)
+	primaryInTitle := containsKeyphrase(input.ArticleTitle, primaryKeyword)
+	primaryInSEOTitle := containsKeyphrase(input.KeywordSet.SEOTitle, primaryKeyword)
+	primaryInSlug := containsKeyphrase(input.KeywordSet.Slug, strings.ReplaceAll(primaryKeyword, " ", "-"))
+	primaryInPermanentLink := containsKeyphrase(input.PermanentLink, input.KeywordSet.Slug)
+	primaryInDescription := containsKeyphrase(input.KeywordSet.MetaDescription, primaryKeyword)
+	primaryInSummary := containsKeyphrase(normalizedSummary, primaryKeyword)
+	primaryInIntro := containsKeyphrase(intro, primaryKeyword)
+	primaryInHeadings := containsKeyphrase(strings.Join(headings, " "), primaryKeyword)
+	primaryMentions := countKeyphraseMatches(normalizedContent, primaryKeyword)
 	keywordDensity := 0.0
 	if len(stats.Words) > 0 {
 		keywordDensity = float64(primaryMentions) / float64(len(stats.Words)) * 100
 	}
+	primaryDistributionRatio := keyphraseSentenceRatio(stats.Sentences, primaryKeyword)
+	imageAltCoverage := computeImageAltCoverage(input.ContentImages)
 
 	// These groups mirror the product requirement document so the frontend can render each section directly.
 	seoChecks := []ChecklistResult{
@@ -179,6 +198,7 @@ func GenerateReview(input ReviewRequest) ReviewResult {
 		makeItem("primaryKeywordInIntroduction", "SEO", "Primary keyword appears in introduction", primaryInIntro, "The introduction should establish the topic quickly.", "Mention the primary keyword early in the opening section.", []string{"articleContent", "primaryKeyword"}),
 		makeItem("primaryKeywordInHeadings", "SEO", "Primary keyword appears in headings", primaryInHeadings, "Subheadings help both readers and search engines scan the topic structure.", "Add the primary keyword or a close variation into at least one subheading.", []string{"articleContent", "primaryKeyword"}),
 		makeItem("primaryKeywordDensityBalanced", "SEO", "Primary keyword density is balanced", keywordDensity >= 0.5 && keywordDensity <= 2.5, "Keyword density should stay visible without becoming repetitive.", "Keep the primary keyword visible without repeating it unnaturally.", []string{"articleContent", "primaryKeyword"}),
+		makeItem("primaryKeywordDistributedAcrossContent", "SEO", "Primary keyword is distributed across content", primaryDistributionRatio >= 0.2, "The keyphrase should appear across multiple sentences, not only once.", "Distribute the primary keyphrase naturally across core sections of the article.", []string{"articleContent", "primaryKeyword"}),
 		makeItem("contentLengthSufficient", "SEO", "Content length is sufficient", len(stats.Words) >= 180, "The article needs enough depth to support the topic well.", "Expand the article with more useful detail, examples, or structure.", []string{"articleContent"}),
 		makeItem("summarySupportsTargetTopic", "SEO", "Summary supports the target topic", primaryInSummary, "The summary should reinforce the same search intent as the main article.", "Rephrase the summary so it supports the main keyword and intent.", []string{"summary", "primaryKeyword"}),
 		makeItem("internalLinksPresent", "SEO", "Internal links are present", internalLinks > 0, "Internal links help connect the article to the rest of the site.", "Add at least one relevant internal link to related content on the same site.", []string{"articleContent", "permanentLink"}),
@@ -186,22 +206,25 @@ func GenerateReview(input ReviewRequest) ReviewResult {
 	}
 
 	advancedChecks := []ChecklistResult{
-		makeItem("detailedInformationProvidesContext", "Advanced", "Detailed information provides useful context", len(strings.TrimSpace(input.DetailedInformation)) >= 40, "Detailed information helps the reviewer understand the article context.", "Add more supporting detail so the review can understand the article context more clearly.", []string{"detailedInformation"}),
-		makeItem("secondaryKeywordsDistributed", "Advanced", "Secondary keywords are distributed naturally", len(secondaryKeywords) > 0 && countAnyPhraseMatches(input.ArticleContent, secondaryKeywords) >= 1, "Supporting keyphrases should appear naturally across the content.", "Use one or two secondary keywords in headings or supporting paragraphs where they fit naturally.", []string{"secondaryKeywords", "articleContent"}),
-		makeItem("synonymSupportPresent", "Advanced", "Synonym support is present", len(synonyms) > 0 && countAnyPhraseMatches(input.ArticleContent, synonyms) >= 1, "Synonyms help broaden topical relevance and avoid repetition.", "Introduce one or two synonym phrases in the body content when they match the meaning.", []string{"synonyms", "articleContent"}),
-		makeItem("topicConsistencyMaintained", "Advanced", "Topic consistency is maintained", containsPhrase(input.DetailedInformation, primaryKeyword) || containsPhrase(input.Summary, primaryKeyword) || primaryInTitle, "The supporting context should stay closely tied to the target topic.", "Use the detailed information and summary fields to strengthen topic framing and search intent alignment.", []string{"detailedInformation", "summary", "primaryKeyword"}),
+		makeItem("detailedInformationProvidesContext", "Advanced", "Detailed information provides useful context", len(strings.TrimSpace(normalizedDetail)) >= 40, "Detailed information helps the reviewer understand the article context.", "Add more supporting detail so the review can understand the article context more clearly.", []string{"detailedInformation"}),
+		makeItem("secondaryKeywordsDistributed", "Advanced", "Secondary keywords are distributed naturally", len(secondaryKeywords) > 0 && phraseSetSentenceRatio(stats.Sentences, secondaryKeywords) >= 0.15, "Supporting keyphrases should appear naturally across the content.", "Use one or two secondary keywords in headings or supporting paragraphs where they fit naturally.", []string{"secondaryKeywords", "articleContent"}),
+		makeItem("synonymSupportPresent", "Advanced", "Synonym support is present", len(synonyms) > 0 && phraseSetSentenceRatio(stats.Sentences, synonyms) >= 0.1, "Synonyms help broaden topical relevance and avoid repetition.", "Introduce one or two synonym phrases in the body content when they match the meaning.", []string{"synonyms", "articleContent"}),
+		makeItem("topicConsistencyMaintained", "Advanced", "Topic consistency is maintained", containsKeyphrase(normalizedDetail, primaryKeyword) || containsKeyphrase(normalizedSummary, primaryKeyword) || primaryInTitle, "The supporting context should stay closely tied to the target topic.", "Use the detailed information and summary fields to strengthen topic framing and search intent alignment.", []string{"detailedInformation", "summary", "primaryKeyword"}),
+		makeItem("imageAltCoverageStrong", "Advanced", "Image alt text coverage is strong", imageAltCoverage >= 0.8, "Image alt text helps accessibility and SEO context for media assets.", "Add descriptive alt text to most product images used in the article.", []string{"contentImages"}),
 	}
 
-	passiveRatio := estimatePassiveVoiceRatio(stats.Sentences)
+	languageCode := detectContentLanguage(normalizedContent, normalizedSummary, normalizedDetail)
+	passiveRatio := estimatePassiveVoiceRatio(stats.Sentences, languageCode)
 	repeatedStartsRatio := estimateRepeatedSentenceStarts(stats.Sentences)
-	transitionCount := countAnyPhraseMatches(input.ArticleContent, transitionWords)
+	transitionSentenceRatio := transitionSentenceRatio(stats.Sentences, languageCode)
+	longSentenceRatio := longSentenceRatio(stats.Sentences)
 
 	readabilityChecks := []ChecklistResult{
-		makeItem("sentenceLengthManageable", "Readability", "Sentence length is manageable", stats.AverageSentenceLength > 0 && stats.AverageSentenceLength <= 22, "Average sentence length should stay readable for editors and readers.", "Break longer sentences into shorter ideas to improve scanability.", []string{"articleContent"}),
-		makeItem("paragraphFlowScannable", "Readability", "Paragraph flow is easy to scan", paragraphsAreScannable(input.ArticleContent), "Dense text blocks make the article harder to scan.", "Split long paragraphs into shorter sections with clearer pacing.", []string{"articleContent"}),
+		makeItem("sentenceLengthManageable", "Readability", "Sentence length is manageable", longSentenceRatio <= 0.25, "Long sentences should stay under control so text remains easy to scan.", "Reduce sentence complexity so fewer than 25% of sentences exceed 20 words.", []string{"articleContent"}),
+		makeItem("paragraphFlowScannable", "Readability", "Paragraph flow is easy to scan", paragraphsAreScannable(normalizedContent), "Dense text blocks make the article harder to scan.", "Split long paragraphs into shorter sections with clearer pacing.", []string{"articleContent"}),
 		makeItem("headingDistributionExists", "Readability", "Heading distribution exists", len(headings) >= 2, "Subheadings make longer content easier to navigate.", "Add subheadings to improve navigation and keyword distribution.", []string{"articleContent"}),
-		makeItem("transitionWordsSupportFlow", "Readability", "Transition words support flow", transitionCount >= 2, "Transition words help readers follow the logic between ideas.", "Add a few more transition phrases so the article flows more naturally.", []string{"articleContent"}),
-		makeItem("passiveVoiceLimited", "Readability", "Passive voice usage stays limited", passiveRatio <= 0.2, "Too much passive voice can make content feel indirect or harder to follow.", "Rewrite some passive constructions in a more direct active voice.", []string{"articleContent"}),
+		makeItem("transitionWordsSupportFlow", "Readability", "Transition words support flow", transitionSentenceRatio >= 0.3, "Transition words should connect ideas in a meaningful share of sentences.", "Use clearer transition phrases in at least 30% of sentences.", []string{"articleContent"}),
+		makeItem("passiveVoiceLimited", "Readability", "Passive voice usage stays limited", passiveRatio <= 0.1, "Too much passive voice can make content feel indirect or harder to follow.", "Rewrite passive constructions so passive voice stays under 10%.", []string{"articleContent"}),
 		makeItem("sentenceStartsVaried", "Readability", "Sentence starts are varied", repeatedStartsRatio <= 0.35, "Repeated sentence starts can make the writing feel mechanical.", "Vary sentence openings so the article sounds more natural to read.", []string{"articleContent"}),
 	}
 
@@ -246,6 +269,43 @@ func GenerateReview(input ReviewRequest) ReviewResult {
 		FieldsNeedingImprovement:   fieldsNeedingImprovement,
 		FieldFeedback:              fieldFeedback,
 	}
+}
+
+func normalizeContentForAnalysis(content string) string {
+	trimmed := strings.TrimSpace(content)
+	if trimmed == "" {
+		return ""
+	}
+
+	normalized := strings.NewReplacer(
+		"</p>", "\n",
+		"</div>", "\n",
+		"</li>", "\n",
+		"<br>", "\n",
+		"<br/>", "\n",
+		"<br />", "\n",
+	).Replace(trimmed)
+	normalized = htmlTagPattern.ReplaceAllString(normalized, " ")
+	normalized = html.UnescapeString(normalized)
+	return strings.TrimSpace(normalized)
+}
+
+func extractHeadings(rawContent string, normalizedContent string) []string {
+	markdownHeadings := headingPattern.FindAllString(normalizedContent, -1)
+	htmlHeadingsRaw := htmlHeadingPattern.FindAllStringSubmatch(rawContent, -1)
+
+	htmlHeadings := make([]string, 0, len(htmlHeadingsRaw))
+	for _, groups := range htmlHeadingsRaw {
+		if len(groups) < 2 {
+			continue
+		}
+		headingText := normalizeContentForAnalysis(groups[1])
+		if headingText != "" {
+			htmlHeadings = append(htmlHeadings, headingText)
+		}
+	}
+
+	return append(markdownHeadings, htmlHeadings...)
 }
 
 func makeItem(code string, group string, checkName string, passed bool, reason string, improvement string, affectedFields []string) ChecklistResult {
@@ -297,35 +357,110 @@ func splitKeywords(raw string) []string {
 }
 
 func tokenize(value string) []string {
-	replacer := strings.NewReplacer(".", " ", ",", " ", "!", " ", "?", " ", "(", " ", ")", " ", "\"", " ", "'", " ", ":", " ", ";", " ")
-	return strings.Fields(strings.ToLower(replacer.Replace(value)))
+	matches := wordPattern.FindAllString(strings.ToLower(value), -1)
+	return matches
 }
 
 func normalize(value string) string {
 	return strings.ToLower(strings.TrimSpace(value))
 }
 
-func containsPhrase(text string, phrase string) bool {
-	normalizedPhrase := normalize(phrase)
-	return normalizedPhrase != "" && strings.Contains(normalize(text), normalizedPhrase)
+func containsKeyphrase(text string, phrase string) bool {
+	phraseTokens := tokenize(phrase)
+	if len(phraseTokens) == 0 {
+		return false
+	}
+
+	textTokens := tokenize(text)
+	if len(textTokens) < len(phraseTokens) {
+		return false
+	}
+
+	for index := 0; index <= len(textTokens)-len(phraseTokens); index++ {
+		matches := true
+		for offset := range phraseTokens {
+			if textTokens[index+offset] != phraseTokens[offset] {
+				matches = false
+				break
+			}
+		}
+		if matches {
+			return true
+		}
+	}
+
+	return false
 }
 
-func countMatches(text string, phrase string) int {
-	normalizedPhrase := normalize(phrase)
-	if normalizedPhrase == "" {
+func countKeyphraseMatches(text string, phrase string) int {
+	phraseTokens := tokenize(phrase)
+	if len(phraseTokens) == 0 {
 		return 0
 	}
-	return strings.Count(normalize(text), normalizedPhrase)
+
+	textTokens := tokenize(text)
+	if len(textTokens) < len(phraseTokens) {
+		return 0
+	}
+
+	count := 0
+	for index := 0; index <= len(textTokens)-len(phraseTokens); index++ {
+		matches := true
+		for offset := range phraseTokens {
+			if textTokens[index+offset] != phraseTokens[offset] {
+				matches = false
+				break
+			}
+		}
+		if matches {
+			count++
+		}
+	}
+
+	return count
 }
 
 func countAnyPhraseMatches(text string, phrases []string) int {
 	count := 0
 	for _, phrase := range phrases {
-		if containsPhrase(text, phrase) {
+		if containsKeyphrase(text, phrase) {
 			count++
 		}
 	}
 	return count
+}
+
+func keyphraseSentenceRatio(sentences []string, phrase string) float64 {
+	if len(sentences) == 0 {
+		return 0
+	}
+
+	matched := 0
+	for _, sentence := range sentences {
+		if containsKeyphrase(sentence, phrase) {
+			matched++
+		}
+	}
+
+	return float64(matched) / float64(len(sentences))
+}
+
+func phraseSetSentenceRatio(sentences []string, phrases []string) float64 {
+	if len(sentences) == 0 || len(phrases) == 0 {
+		return 0
+	}
+
+	matched := 0
+	for _, sentence := range sentences {
+		for _, phrase := range phrases {
+			if containsKeyphrase(sentence, phrase) {
+				matched++
+				break
+			}
+		}
+	}
+
+	return float64(matched) / float64(len(sentences))
 }
 
 func buildContentStats(content string) contentStats {
@@ -395,7 +530,11 @@ func extractHost(rawURL string) string {
 	return strings.ToLower(parsedURL.Hostname())
 }
 
-func estimatePassiveVoiceRatio(sentences []string) float64 {
+func estimatePassiveVoiceRatio(sentences []string, languageCode string) float64 {
+	if languageCode != "en" {
+		return 0
+	}
+
 	if len(sentences) == 0 {
 		return 0
 	}
@@ -408,6 +547,65 @@ func estimatePassiveVoiceRatio(sentences []string) float64 {
 	}
 
 	return float64(passiveCount) / float64(len(sentences))
+}
+
+func detectContentLanguage(contents ...string) string {
+	for _, content := range contents {
+		if vietnamesePattern.MatchString(content) {
+			return "vi"
+		}
+	}
+	return "en"
+}
+
+func transitionSentenceRatio(sentences []string, languageCode string) float64 {
+	if len(sentences) == 0 {
+		return 0
+	}
+
+	transitionWords := transitionWordsEN
+	if languageCode == "vi" {
+		transitionWords = transitionWordsVI
+	}
+
+	matched := 0
+	for _, sentence := range sentences {
+		if countAnyPhraseMatches(sentence, transitionWords) > 0 {
+			matched++
+		}
+	}
+
+	return float64(matched) / float64(len(sentences))
+}
+
+func longSentenceRatio(sentences []string) float64 {
+	if len(sentences) == 0 {
+		return 0
+	}
+
+	longSentences := 0
+	for _, sentence := range sentences {
+		if len(tokenize(sentence)) > 20 {
+			longSentences++
+		}
+	}
+
+	return float64(longSentences) / float64(len(sentences))
+}
+
+func computeImageAltCoverage(images []ImportedImage) float64 {
+	if len(images) == 0 {
+		return 1
+	}
+
+	withAlt := 0
+	for _, image := range images {
+		if strings.TrimSpace(image.AltText) != "" {
+			withAlt++
+		}
+	}
+
+	return float64(withAlt) / float64(len(images))
 }
 
 func estimateRepeatedSentenceStarts(sentences []string) float64 {

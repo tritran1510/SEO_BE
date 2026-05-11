@@ -2,10 +2,19 @@ package repository
 
 import (
 	"encoding/json"
+	"errors"
+	"fmt"
+	"log"
 	"math"
 
 	"github.com/seo/backend/internal/dto"
 	"github.com/seo/backend/internal/model"
+	"gorm.io/gorm"
+)
+
+var (
+	ErrArticleNotFound   = errors.New("article not found")
+	ErrNoReviewsForArticle = errors.New("no reviews for article")
 )
 
 // GetAllReviewsGrouped retrieves all articles grouped by reviews with pagination
@@ -142,6 +151,9 @@ func GetReviewHistoryByArticleID(articleID, page, pageSize int) (*dto.ReviewHist
 	// Get article
 	var article model.Article
 	if err := DB.First(&article, articleID).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, fmt.Errorf("%w: %d", ErrArticleNotFound, articleID)
+		}
 		return nil, err
 	}
 
@@ -149,6 +161,9 @@ func GetReviewHistoryByArticleID(articleID, page, pageSize int) (*dto.ReviewHist
 	var totalCount int64
 	if err := DB.Model(&model.SEOReview{}).Where("article_id = ?", articleID).Count(&totalCount).Error; err != nil {
 		return nil, err
+	}
+	if totalCount == 0 {
+		return nil, fmt.Errorf("%w: %d", ErrNoReviewsForArticle, articleID)
 	}
 
 	// Get reviews with pagination, ordered by created_at DESC
@@ -161,33 +176,44 @@ func GetReviewHistoryByArticleID(articleID, page, pageSize int) (*dto.ReviewHist
 		return nil, err
 	}
 
-	// Get SEO metadata for the article
-	var seoMetadata model.ArticleSEOMetadata
-	DB.Where("article_id = ?", articleID).First(&seoMetadata)
-
-	// Get metrics for the article
-	var metrics model.ContentMetrics
-	DB.Where("article_id = ?", articleID).First(&metrics)
-
 	// Get article review summary
 	var summary model.ArticleReviewSummary
 	DB.Where("article_id = ?", articleID).First(&summary)
+
+	// Backward compatibility for old history rows created before SEO snapshots existed.
+	var seoMetadata model.ArticleSEOMetadata
+	_ = DB.Where("article_id = ?", articleID).First(&seoMetadata).Error
 
 	// Build DTOs
 	historyItems := make([]dto.ReviewHistoryItemDTO, 0, len(reviews))
 	for _, review := range reviews {
 		var history model.ReviewHistory
-		_ = DB.Where("review_id = ?", review.ID).
+		historyErr := DB.Where("review_id = ?", review.ID).
 			Order("created_at DESC").
 			First(&history).Error
+		if historyErr != nil && !errors.Is(historyErr, gorm.ErrRecordNotFound) {
+			return nil, historyErr
+		}
+		isLegacyHistory := history.ID == 0 || history.ArticleContentSnapshot == nil
 
 		recommendations := make([]string, 0)
-		if len(history.Recommendations) > 0 {
-			_ = json.Unmarshal(history.Recommendations, &recommendations)
-		}
+		parseSnapshotJSON(history.Recommendations, &recommendations, review.ID, articleID, "recommendations")
+		imageMetadata := make([]dto.ReviewImageMetadataDTO, 0)
+		parseSnapshotJSON(history.ImageMetadataSnapshot, &imageMetadata, review.ID, articleID, "image_metadata_snapshot")
 		checklistResults := make([]map[string]interface{}, 0)
-		if len(history.ChecklistChanges) > 0 {
-			_ = json.Unmarshal(history.ChecklistChanges, &checklistResults)
+		parseSnapshotJSON(history.ChecklistChanges, &checklistResults, review.ID, articleID, "checklist_changes")
+
+		articleContent := &article.Content
+		if history.ArticleContentSnapshot != nil {
+			articleContent = history.ArticleContentSnapshot
+		}
+		summaryText := article.Summary
+		if history.SummarySnapshot != nil {
+			summaryText = history.SummarySnapshot
+		}
+		detailedInfo := article.DetailedInformation
+		if history.DetailedInfoSnapshot != nil {
+			detailedInfo = history.DetailedInfoSnapshot
 		}
 
 		item := dto.ReviewHistoryItemDTO{
@@ -199,14 +225,16 @@ func GetReviewHistoryByArticleID(articleID, page, pageSize int) (*dto.ReviewHist
 			AdvancedScore:              review.AdvancedScore,
 			Status:                     &review.Status,
 			Notes:                      review.Notes,
-			ArticleContent:             &article.Content,
-			Summary:                    article.Summary,
-			DetailedInformation:        article.DetailedInformation,
-			SEOTitle:                   seoMetadata.SEOTitle,
-			MetaDescription:            seoMetadata.MetaDescription,
-			PrimaryKeyword:             seoMetadata.PrimaryKeyword,
-			SecondaryKeywords:          seoMetadata.SecondaryKeywords,
-			Synonyms:                   seoMetadata.Synonyms,
+			ArticleContent:             articleContent,
+			Summary:                    summaryText,
+			DetailedInformation:        detailedInfo,
+			SEOTitle:                   coalesceHistorySnapshot(history.SEOTitleSnapshot, seoMetadata.SEOTitle, isLegacyHistory),
+			MetaDescription:            coalesceHistorySnapshot(history.MetaDescriptionSnapshot, seoMetadata.MetaDescription, isLegacyHistory),
+			PrimaryKeyword:             coalesceHistorySnapshot(history.PrimaryKeywordSnapshot, seoMetadata.PrimaryKeyword, isLegacyHistory),
+			Slug:                       coalesceHistorySnapshot(history.SlugSnapshot, seoMetadata.Slug, isLegacyHistory),
+			SecondaryKeywords:          coalesceHistorySnapshot(history.SecondaryKeywordsSnapshot, seoMetadata.SecondaryKeywords, isLegacyHistory),
+			Synonyms:                   coalesceHistorySnapshot(history.SynonymsSnapshot, seoMetadata.Synonyms, isLegacyHistory),
+			ImageMetadata:              imageMetadata,
 			ImprovementRecommendations: recommendations,
 			ChecklistResults:           checklistResults,
 		}
@@ -244,6 +272,31 @@ func GetReviewHistoryByArticleID(articleID, page, pageSize int) (*dto.ReviewHist
 		},
 		Summary: summaryDTO,
 	}, nil
+}
+
+func parseSnapshotJSON(raw []byte, target interface{}, reviewID string, articleID int, fieldName string) {
+	if len(raw) == 0 {
+		return
+	}
+	if err := json.Unmarshal(raw, target); err != nil {
+		log.Printf(
+			"warning: failed to parse review history snapshot field=%s article_id=%d review_id=%s err=%v",
+			fieldName,
+			articleID,
+			reviewID,
+			err,
+		)
+	}
+}
+
+func coalesceHistorySnapshot(primary *string, fallback *string, allowLegacyFallback bool) *string {
+	if primary != nil {
+		return primary
+	}
+	if !allowLegacyFallback {
+		return nil
+	}
+	return fallback
 }
 
 // GetReviewByID retrieves a single review by ID

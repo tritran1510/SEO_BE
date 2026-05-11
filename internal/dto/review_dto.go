@@ -4,6 +4,18 @@ import (
 	"time"
 )
 
+type ReviewImageMetadataDTO struct {
+	ID          string `json:"id"`
+	Name        string `json:"name"`
+	MimeType    string `json:"mimeType"`
+	DataURL     string `json:"dataUrl"`
+	AltText     string `json:"altText"`
+	Title       string `json:"title"`
+	Caption     string `json:"caption"`
+	Description string `json:"description"`
+	SortOrder   int    `json:"sortOrder"`
+}
+
 // ReviewListItemDTO represents a single article in the reviewed articles list
 type ReviewListItemDTO struct {
 	ArticleID              int        `json:"article_id"`
@@ -41,8 +53,10 @@ type ReviewHistoryItemDTO struct {
 	SEOTitle                   *string                  `json:"seo_title,omitempty"`
 	MetaDescription            *string                  `json:"meta_description,omitempty"`
 	PrimaryKeyword             *string                  `json:"primary_keyword,omitempty"`
+	Slug                       *string                  `json:"slug,omitempty"`
 	SecondaryKeywords          *string                  `json:"secondary_keywords,omitempty"`
 	Synonyms                   *string                  `json:"synonyms,omitempty"`
+	ImageMetadata              []ReviewImageMetadataDTO `json:"image_metadata,omitempty"`
 	ImprovementRecommendations []string                 `json:"improvement_recommendations,omitempty"`
 	ChecklistResults           []map[string]interface{} `json:"checklist_results,omitempty"`
 }

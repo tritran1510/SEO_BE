@@ -3,10 +3,12 @@ package repository
 import (
 	"encoding/json"
 	"errors"
+	"html"
 	"regexp"
 	"strings"
 	"time"
 
+	"github.com/seo/backend/internal/dto"
 	"github.com/seo/backend/internal/model"
 	"github.com/seo/backend/internal/service"
 	"gorm.io/datatypes"
@@ -15,6 +17,7 @@ import (
 )
 
 var sentenceSplitPattern = regexp.MustCompile(`[.!?]+`)
+var htmlTagPattern = regexp.MustCompile(`(?s)<[^>]+>`)
 
 // SaveReviewSubmission persists incoming review input and generated result.
 func SaveReviewSubmission(req service.ReviewRequest, result service.ReviewResult) error {
@@ -127,11 +130,15 @@ func replaceArticleImages(tx *gorm.DB, articleID int, images []service.ImportedI
 	}
 	for i, img := range images {
 		image := model.ArticleImage{
-			ArticleID: articleID,
-			ImageName: stringPtrOrNil(img.Name),
-			MimeType:  stringPtrOrNil(img.MimeType),
-			DataURL:   stringPtrOrNil(img.DataURL),
-			SortOrder: i,
+			ArticleID:   articleID,
+			ImageName:   stringPtrOrNil(img.Name),
+			MimeType:    stringPtrOrNil(img.MimeType),
+			DataURL:     stringPtrOrNil(img.DataURL),
+			AltText:     stringPtrOrNil(img.AltText),
+			Title:       stringPtrOrNil(img.Title),
+			Caption:     stringPtrOrNil(img.Caption),
+			Description: stringPtrOrNil(img.Description),
+			SortOrder:   i,
 		}
 		if err := tx.Create(&image).Error; err != nil {
 			return err
@@ -141,9 +148,10 @@ func replaceArticleImages(tx *gorm.DB, articleID int, images []service.ImportedI
 }
 
 func upsertContentMetrics(tx *gorm.DB, articleID int, req service.ReviewRequest) error {
-	wordCount := len(strings.Fields(req.ArticleContent))
+	normalizedContent := normalizeContentForMetrics(req.ArticleContent)
+	wordCount := len(strings.Fields(normalizedContent))
 	sentenceCount := 0
-	for _, sentence := range sentenceSplitPattern.Split(req.ArticleContent, -1) {
+	for _, sentence := range sentenceSplitPattern.Split(normalizedContent, -1) {
 		if strings.TrimSpace(sentence) != "" {
 			sentenceCount++
 		}
@@ -152,7 +160,7 @@ func upsertContentMetrics(tx *gorm.DB, articleID int, req service.ReviewRequest)
 	keywordDensity := float32(0)
 	keyword := strings.TrimSpace(strings.ToLower(req.KeywordSet.PrimaryKeyword))
 	if wordCount > 0 && keyword != "" {
-		lowered := strings.ToLower(req.ArticleContent)
+		lowered := strings.ToLower(normalizedContent)
 		mentions := strings.Count(lowered, keyword)
 		keywordDensity = float32(mentions) / float32(wordCount) * 100
 	}
@@ -221,13 +229,13 @@ func saveChecklistResults(tx *gorm.DB, reviewID string, checklist []service.Chec
 		defaultImprovement := stringPtrOrNil(item.Improvement)
 
 		checklistItem := model.ReviewChecklistItem{
-			CheckCode:           checkCode,
-			CheckName:           checkName,
-			CheckGroup:          checkGroup,
-			DefaultReason:       defaultReason,
-			DefaultImprovement:  defaultImprovement,
-			SortOrder:           i,
-			IsActive:            true,
+			CheckCode:          checkCode,
+			CheckName:          checkName,
+			CheckGroup:         checkGroup,
+			DefaultReason:      defaultReason,
+			DefaultImprovement: defaultImprovement,
+			SortOrder:          i,
+			IsActive:           true,
 		}
 
 		if err := tx.Clauses(clause.OnConflict{
@@ -299,9 +307,10 @@ func createReviewHistory(tx *gorm.DB, reviewID string, articleID int, req servic
 	advanced := result.AdvancedScore
 	status := strings.TrimSpace(result.Status)
 
-	wordCount := len(strings.Fields(req.ArticleContent))
+	normalizedContent := normalizeContentForMetrics(req.ArticleContent)
+	wordCount := len(strings.Fields(normalizedContent))
 	internalLinks, outboundLinks := countLinksForHistory(req.ArticleContent, req.PermanentLink)
-	keywordDensity := computeKeywordDensity(req.ArticleContent, req.KeywordSet.PrimaryKeyword)
+	keywordDensity := computeKeywordDensity(normalizedContent, req.KeywordSet.PrimaryKeyword)
 
 	checklistJSON, err := toJSON(result.ChecklistResults)
 	if err != nil {
@@ -311,26 +320,58 @@ func createReviewHistory(tx *gorm.DB, reviewID string, articleID int, req servic
 	if err != nil {
 		return err
 	}
+	imageMetadataJSON, err := toJSON(buildImageSnapshots(req.ContentImages))
+	if err != nil {
+		return err
+	}
 
 	history := model.ReviewHistory{
-		ReviewID:                 reviewID,
-		ArticleID:                articleID,
-		Action:                   "scored",
-		SEOScoreSnapshot:         &seo,
-		ReadabilityScoreSnapshot: &readability,
-		AdvancedScoreSnapshot:    &advanced,
-		OverallScoreSnapshot:     &overall,
-		StatusSnapshot:           &status,
-		PrimaryKeywordSnapshot:   stringPtrOrNil(req.KeywordSet.PrimaryKeyword),
-		KeywordDensitySnapshot:   &keywordDensity,
-		WordCountSnapshot:        &wordCount,
-		InternalLinksSnapshot:    &internalLinks,
-		OutboundLinksSnapshot:    &outboundLinks,
-		ChecklistChanges:         checklistJSON,
-		Recommendations:          recommendationsJSON,
+		ReviewID:                  reviewID,
+		ArticleID:                 articleID,
+		Action:                    "scored",
+		SEOScoreSnapshot:          &seo,
+		ReadabilityScoreSnapshot:  &readability,
+		AdvancedScoreSnapshot:     &advanced,
+		OverallScoreSnapshot:      &overall,
+		StatusSnapshot:            &status,
+		PrimaryKeywordSnapshot:    stringPtrOrNil(req.KeywordSet.PrimaryKeyword),
+		SEOTitleSnapshot:          stringPtrOrNil(req.KeywordSet.SEOTitle),
+		MetaDescriptionSnapshot:   stringPtrOrNil(req.KeywordSet.MetaDescription),
+		SlugSnapshot:              stringPtrOrNil(req.KeywordSet.Slug),
+		SecondaryKeywordsSnapshot: stringPtrOrNil(req.KeywordSet.SecondaryKeywords),
+		SynonymsSnapshot:          stringPtrOrNil(req.KeywordSet.Synonyms),
+		ArticleContentSnapshot:    stringPtrOrNil(req.ArticleContent),
+		SummarySnapshot:           stringPtrOrNil(req.Summary),
+		DetailedInfoSnapshot:      stringPtrOrNil(req.DetailedInformation),
+		ImageMetadataSnapshot:     imageMetadataJSON,
+		KeywordDensitySnapshot:    &keywordDensity,
+		WordCountSnapshot:         &wordCount,
+		InternalLinksSnapshot:     &internalLinks,
+		OutboundLinksSnapshot:     &outboundLinks,
+		ChecklistChanges:          checklistJSON,
+		Recommendations:           recommendationsJSON,
 	}
 
 	return tx.Create(&history).Error
+}
+
+func buildImageSnapshots(images []service.ImportedImage) []dto.ReviewImageMetadataDTO {
+	snapshots := make([]dto.ReviewImageMetadataDTO, 0, len(images))
+	for index, image := range images {
+		snapshots = append(snapshots, dto.ReviewImageMetadataDTO{
+			ID:          strings.TrimSpace(image.ID),
+			Name:        strings.TrimSpace(image.Name),
+			MimeType:    strings.TrimSpace(image.MimeType),
+			DataURL:     strings.TrimSpace(image.DataURL),
+			AltText:     strings.TrimSpace(image.AltText),
+			Title:       strings.TrimSpace(image.Title),
+			Caption:     strings.TrimSpace(image.Caption),
+			Description: strings.TrimSpace(image.Description),
+			SortOrder:   index,
+		})
+	}
+
+	return snapshots
 }
 
 func upsertReviewSummary(tx *gorm.DB, articleID int, reviewID string, result service.ReviewResult) error {
@@ -461,6 +502,25 @@ func computeKeywordDensity(content string, primaryKeyword string) float32 {
 	}
 	mentions := strings.Count(strings.ToLower(content), keyword)
 	return float32(mentions) / float32(words) * 100
+}
+
+func normalizeContentForMetrics(content string) string {
+	trimmed := strings.TrimSpace(content)
+	if trimmed == "" {
+		return ""
+	}
+
+	normalized := strings.NewReplacer(
+		"</p>", "\n",
+		"</div>", "\n",
+		"</li>", "\n",
+		"<br>", "\n",
+		"<br/>", "\n",
+		"<br />", "\n",
+	).Replace(trimmed)
+	normalized = htmlTagPattern.ReplaceAllString(normalized, " ")
+	normalized = html.UnescapeString(normalized)
+	return strings.TrimSpace(normalized)
 }
 
 func toJSON(v interface{}) (datatypes.JSON, error) {

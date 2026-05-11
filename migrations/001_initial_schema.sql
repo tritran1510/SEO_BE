@@ -59,6 +59,9 @@ CREATE TABLE article_images (
   mime_type VARCHAR(50),
   data_url TEXT,
   alt_text VARCHAR(255),
+  title VARCHAR(255),
+  caption TEXT,
+  description TEXT,
   sort_order INTEGER DEFAULT 0,
   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
@@ -204,6 +207,12 @@ CREATE TABLE review_history (
   status_snapshot VARCHAR(50),
   -- Key metrics snapshot
   primary_keyword_snapshot VARCHAR(255),
+  seo_title_snapshot VARCHAR(255),
+  meta_description_snapshot VARCHAR(500),
+  slug_snapshot VARCHAR(255),
+  secondary_keywords_snapshot TEXT,
+  synonyms_snapshot TEXT,
+  image_metadata_snapshot JSONB,
   keyword_density_snapshot DECIMAL(5,3),
   word_count_snapshot INTEGER,
   internal_links_snapshot INTEGER,
@@ -323,6 +332,15 @@ SELECT
   rh.overall_score_snapshot,
   rh.status_snapshot,
   rh.primary_keyword_snapshot,
+  rh.seo_title_snapshot,
+  rh.meta_description_snapshot,
+  rh.slug_snapshot,
+  rh.secondary_keywords_snapshot,
+  rh.synonyms_snapshot,
+  rh.article_content_snapshot,
+  rh.summary_snapshot,
+  rh.detailed_information_snapshot,
+  rh.image_metadata_snapshot,
   rh.keyword_density_snapshot,
   rh.word_count_snapshot,
   rh.created_at
