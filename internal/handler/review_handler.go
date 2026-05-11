@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"errors"
 	"net/http"
 	"strconv"
 
@@ -89,9 +90,10 @@ func GetArticleReviewHistory(w http.ResponseWriter, r *http.Request) {
 	// Get review history from repository
 	data, err := repository.GetReviewHistoryByArticleID(articleID, page, pageSize)
 	if err != nil {
-		writeJSON(w, http.StatusNotFound, Response{
+		statusCode, message := mapReviewHistoryError(err)
+		writeJSON(w, statusCode, Response{
 			Status:  "error",
-			Message: "Article not found or has no reviews",
+			Message: message,
 		})
 		return
 	}
@@ -101,4 +103,13 @@ func GetArticleReviewHistory(w http.ResponseWriter, r *http.Request) {
 		Message: "Review history retrieved successfully",
 		Data:    data,
 	})
+}
+
+func mapReviewHistoryError(err error) (int, string) {
+	switch {
+	case errors.Is(err, repository.ErrArticleNotFound), errors.Is(err, repository.ErrNoReviewsForArticle):
+		return http.StatusNotFound, "Article not found or has no reviews"
+	default:
+		return http.StatusInternalServerError, "Failed to retrieve review history"
+	}
 }

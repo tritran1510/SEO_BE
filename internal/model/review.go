@@ -89,27 +89,33 @@ type ImprovementRecommendation struct {
 
 // ReviewHistory stores complete revision history
 type ReviewHistory struct {
-	ID                       int            `gorm:"primaryKey" json:"id"`
-	ReviewID                 string         `gorm:"type:uuid;index;foreignKey:ReviewID" json:"review_id"`
-	ArticleID                int            `gorm:"index;foreignKey:ArticleID" json:"article_id"`
-	Action                   string         `gorm:"index" json:"action"` // created, updated, scored, finalized, archived, improved
-	Notes                    *string        `json:"notes"`
-	SEOScoreSnapshot         *int           `json:"seo_score_snapshot"`
-	ReadabilityScoreSnapshot *int           `json:"readability_score_snapshot"`
-	AdvancedScoreSnapshot    *int           `json:"advanced_score_snapshot"`
-	OverallScoreSnapshot     *int           `json:"overall_score_snapshot"`
-	StatusSnapshot           *string        `json:"status_snapshot"`
-	PrimaryKeywordSnapshot   *string        `json:"primary_keyword_snapshot"`
-	ArticleContentSnapshot   *string        `json:"article_content_snapshot"`
-	SummarySnapshot          *string        `json:"summary_snapshot"`
-	DetailedInfoSnapshot     *string        `json:"detailed_information_snapshot"`
-	KeywordDensitySnapshot   *float32       `json:"keyword_density_snapshot"`
-	WordCountSnapshot        *int           `json:"word_count_snapshot"`
-	InternalLinksSnapshot    *int           `json:"internal_links_snapshot"`
-	OutboundLinksSnapshot    *int           `json:"outbound_links_snapshot"`
-	ChecklistChanges         datatypes.JSON `gorm:"type:jsonb" json:"checklist_changes"`
-	Recommendations          datatypes.JSON `gorm:"type:jsonb" json:"recommendations"`
-	CreatedAt                time.Time      `json:"created_at"`
+	ID                        int            `gorm:"primaryKey" json:"id"`
+	ReviewID                  string         `gorm:"type:uuid;index;foreignKey:ReviewID" json:"review_id"`
+	ArticleID                 int            `gorm:"index;foreignKey:ArticleID" json:"article_id"`
+	Action                    string         `gorm:"index" json:"action"` // created, updated, scored, finalized, archived, improved
+	Notes                     *string        `json:"notes"`
+	SEOScoreSnapshot          *int           `json:"seo_score_snapshot"`
+	ReadabilityScoreSnapshot  *int           `json:"readability_score_snapshot"`
+	AdvancedScoreSnapshot     *int           `json:"advanced_score_snapshot"`
+	OverallScoreSnapshot      *int           `json:"overall_score_snapshot"`
+	StatusSnapshot            *string        `json:"status_snapshot"`
+	PrimaryKeywordSnapshot    *string        `json:"primary_keyword_snapshot"`
+	SEOTitleSnapshot          *string        `json:"seo_title_snapshot"`
+	MetaDescriptionSnapshot   *string        `json:"meta_description_snapshot"`
+	SlugSnapshot              *string        `json:"slug_snapshot"`
+	SecondaryKeywordsSnapshot *string        `json:"secondary_keywords_snapshot"`
+	SynonymsSnapshot          *string        `json:"synonyms_snapshot"`
+	ArticleContentSnapshot    *string        `json:"article_content_snapshot"`
+	SummarySnapshot           *string        `json:"summary_snapshot"`
+	DetailedInfoSnapshot      *string        `json:"detailed_information_snapshot"`
+	ImageMetadataSnapshot     datatypes.JSON `gorm:"type:jsonb" json:"image_metadata_snapshot"`
+	KeywordDensitySnapshot    *float32       `json:"keyword_density_snapshot"`
+	WordCountSnapshot         *int           `json:"word_count_snapshot"`
+	InternalLinksSnapshot     *int           `json:"internal_links_snapshot"`
+	OutboundLinksSnapshot     *int           `json:"outbound_links_snapshot"`
+	ChecklistChanges          datatypes.JSON `gorm:"type:jsonb" json:"checklist_changes"`
+	Recommendations           datatypes.JSON `gorm:"type:jsonb" json:"recommendations"`
+	CreatedAt                 time.Time      `json:"created_at"`
 
 	Review  *SEOReview `gorm:"foreignKey:ReviewID;constraint:OnDelete:CASCADE" json:"-"`
 	Article *Article   `gorm:"foreignKey:ArticleID;constraint:OnDelete:CASCADE" json:"-"`

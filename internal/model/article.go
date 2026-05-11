@@ -6,57 +6,60 @@ import (
 
 // Article represents a blog post
 type Article struct {
-	ID                    int       `gorm:"primaryKey" json:"id"`
-	Title                 string    `json:"title"`
-	Slug                  string    `gorm:"uniqueIndex" json:"slug"`
-	PermanentLink         string    `gorm:"unique" json:"permanent_link"`
-	Content               string    `json:"content"`
-	Summary               *string   `json:"summary"`
-	DetailedInformation   *string   `json:"detailed_information"`
-	Status                string    `gorm:"default:'draft'" json:"status"` // draft, published, archived
-	CreatedAt             time.Time `json:"created_at"`
-	UpdatedAt             time.Time `json:"updated_at"`
-	PublishedAt           *time.Time `json:"published_at"`
-	DeletedAt             *time.Time `json:"deleted_at"`
+	ID                  int        `gorm:"primaryKey" json:"id"`
+	Title               string     `json:"title"`
+	Slug                string     `gorm:"uniqueIndex" json:"slug"`
+	PermanentLink       string     `gorm:"unique" json:"permanent_link"`
+	Content             string     `json:"content"`
+	Summary             *string    `json:"summary"`
+	DetailedInformation *string    `json:"detailed_information"`
+	Status              string     `gorm:"default:'draft'" json:"status"` // draft, published, archived
+	CreatedAt           time.Time  `json:"created_at"`
+	UpdatedAt           time.Time  `json:"updated_at"`
+	PublishedAt         *time.Time `json:"published_at"`
+	DeletedAt           *time.Time `json:"deleted_at"`
 
 	// Relationships
-	SEOMetadata  *ArticleSEOMetadata       `gorm:"foreignKey:ArticleID;constraint:OnDelete:CASCADE" json:"seo_metadata,omitempty"`
-	Images       []ArticleImage            `gorm:"foreignKey:ArticleID;constraint:OnDelete:CASCADE" json:"images,omitempty"`
-	Metrics      *ContentMetrics           `gorm:"foreignKey:ArticleID;constraint:OnDelete:CASCADE" json:"metrics,omitempty"`
-	Reviews      []SEOReview               `gorm:"foreignKey:ArticleID;constraint:OnDelete:CASCADE" json:"reviews,omitempty"`
-	ReviewSummary *ArticleReviewSummary    `gorm:"foreignKey:ArticleID;constraint:OnDelete:CASCADE" json:"review_summary,omitempty"`
+	SEOMetadata   *ArticleSEOMetadata   `gorm:"foreignKey:ArticleID;constraint:OnDelete:CASCADE" json:"seo_metadata,omitempty"`
+	Images        []ArticleImage        `gorm:"foreignKey:ArticleID;constraint:OnDelete:CASCADE" json:"images,omitempty"`
+	Metrics       *ContentMetrics       `gorm:"foreignKey:ArticleID;constraint:OnDelete:CASCADE" json:"metrics,omitempty"`
+	Reviews       []SEOReview           `gorm:"foreignKey:ArticleID;constraint:OnDelete:CASCADE" json:"reviews,omitempty"`
+	ReviewSummary *ArticleReviewSummary `gorm:"foreignKey:ArticleID;constraint:OnDelete:CASCADE" json:"review_summary,omitempty"`
 }
 
 // ArticleSEOMetadata stores SEO-specific data
 type ArticleSEOMetadata struct {
-	ID                 int       `gorm:"primaryKey" json:"id"`
-	ArticleID          int       `gorm:"uniqueIndex;foreignKey:ArticleID" json:"article_id"`
-	SEOTitle           *string   `json:"seo_title"`
-	MetaDescription    *string   `json:"meta_description"`
-	Slug               *string   `json:"slug"`
-	PrimaryKeyword     *string   `json:"primary_keyword"`
-	SecondaryKeywords  *string   `json:"secondary_keywords"` // comma-separated
-	Synonyms           *string   `json:"synonyms"`            // comma-separated
-	CanonicalURL       *string   `json:"canonical_url"`
-	OGTitle            *string   `json:"og_title"`
-	OGDescription      *string   `json:"og_description"`
-	OGImageURL         *string   `json:"og_image_url"`
-	CreatedAt          time.Time `json:"created_at"`
-	UpdatedAt          time.Time `json:"updated_at"`
+	ID                int       `gorm:"primaryKey" json:"id"`
+	ArticleID         int       `gorm:"uniqueIndex;foreignKey:ArticleID" json:"article_id"`
+	SEOTitle          *string   `json:"seo_title"`
+	MetaDescription   *string   `json:"meta_description"`
+	Slug              *string   `json:"slug"`
+	PrimaryKeyword    *string   `json:"primary_keyword"`
+	SecondaryKeywords *string   `json:"secondary_keywords"` // comma-separated
+	Synonyms          *string   `json:"synonyms"`           // comma-separated
+	CanonicalURL      *string   `json:"canonical_url"`
+	OGTitle           *string   `json:"og_title"`
+	OGDescription     *string   `json:"og_description"`
+	OGImageURL        *string   `json:"og_image_url"`
+	CreatedAt         time.Time `json:"created_at"`
+	UpdatedAt         time.Time `json:"updated_at"`
 
 	Article *Article `gorm:"foreignKey:ArticleID;constraint:OnDelete:CASCADE" json:"-"`
 }
 
 // ArticleImage stores images associated with articles
 type ArticleImage struct {
-	ID        int       `gorm:"primaryKey" json:"id"`
-	ArticleID int       `json:"article_id"`
-	ImageName *string   `json:"image_name"`
-	MimeType  *string   `json:"mime_type"`
-	DataURL   *string   `json:"data_url"`
-	AltText   *string   `json:"alt_text"`
-	SortOrder int       `gorm:"default:0" json:"sort_order"`
-	CreatedAt time.Time `json:"created_at"`
+	ID          int       `gorm:"primaryKey" json:"id"`
+	ArticleID   int       `json:"article_id"`
+	ImageName   *string   `json:"image_name"`
+	MimeType    *string   `json:"mime_type"`
+	DataURL     *string   `json:"data_url"`
+	AltText     *string   `json:"alt_text"`
+	Title       *string   `json:"title"`
+	Caption     *string   `json:"caption"`
+	Description *string   `json:"description"`
+	SortOrder   int       `gorm:"default:0" json:"sort_order"`
+	CreatedAt   time.Time `json:"created_at"`
 
 	Article *Article `gorm:"foreignKey:ArticleID;constraint:OnDelete:CASCADE" json:"-"`
 }

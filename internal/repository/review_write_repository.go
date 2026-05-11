@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/seo/backend/internal/dto"
 	"github.com/seo/backend/internal/model"
 	"github.com/seo/backend/internal/service"
 	"gorm.io/datatypes"
@@ -129,11 +130,15 @@ func replaceArticleImages(tx *gorm.DB, articleID int, images []service.ImportedI
 	}
 	for i, img := range images {
 		image := model.ArticleImage{
-			ArticleID: articleID,
-			ImageName: stringPtrOrNil(img.Name),
-			MimeType:  stringPtrOrNil(img.MimeType),
-			DataURL:   stringPtrOrNil(img.DataURL),
-			SortOrder: i,
+			ArticleID:   articleID,
+			ImageName:   stringPtrOrNil(img.Name),
+			MimeType:    stringPtrOrNil(img.MimeType),
+			DataURL:     stringPtrOrNil(img.DataURL),
+			AltText:     stringPtrOrNil(img.AltText),
+			Title:       stringPtrOrNil(img.Title),
+			Caption:     stringPtrOrNil(img.Caption),
+			Description: stringPtrOrNil(img.Description),
+			SortOrder:   i,
 		}
 		if err := tx.Create(&image).Error; err != nil {
 			return err
@@ -315,29 +320,58 @@ func createReviewHistory(tx *gorm.DB, reviewID string, articleID int, req servic
 	if err != nil {
 		return err
 	}
+	imageMetadataJSON, err := toJSON(buildImageSnapshots(req.ContentImages))
+	if err != nil {
+		return err
+	}
 
 	history := model.ReviewHistory{
-		ReviewID:                 reviewID,
-		ArticleID:                articleID,
-		Action:                   "scored",
-		SEOScoreSnapshot:         &seo,
-		ReadabilityScoreSnapshot: &readability,
-		AdvancedScoreSnapshot:    &advanced,
-		OverallScoreSnapshot:     &overall,
-		StatusSnapshot:           &status,
-		PrimaryKeywordSnapshot:   stringPtrOrNil(req.KeywordSet.PrimaryKeyword),
-		ArticleContentSnapshot:   stringPtrOrNil(req.ArticleContent),
-		SummarySnapshot:          stringPtrOrNil(req.Summary),
-		DetailedInfoSnapshot:     stringPtrOrNil(req.DetailedInformation),
-		KeywordDensitySnapshot:   &keywordDensity,
-		WordCountSnapshot:        &wordCount,
-		InternalLinksSnapshot:    &internalLinks,
-		OutboundLinksSnapshot:    &outboundLinks,
-		ChecklistChanges:         checklistJSON,
-		Recommendations:          recommendationsJSON,
+		ReviewID:                  reviewID,
+		ArticleID:                 articleID,
+		Action:                    "scored",
+		SEOScoreSnapshot:          &seo,
+		ReadabilityScoreSnapshot:  &readability,
+		AdvancedScoreSnapshot:     &advanced,
+		OverallScoreSnapshot:      &overall,
+		StatusSnapshot:            &status,
+		PrimaryKeywordSnapshot:    stringPtrOrNil(req.KeywordSet.PrimaryKeyword),
+		SEOTitleSnapshot:          stringPtrOrNil(req.KeywordSet.SEOTitle),
+		MetaDescriptionSnapshot:   stringPtrOrNil(req.KeywordSet.MetaDescription),
+		SlugSnapshot:              stringPtrOrNil(req.KeywordSet.Slug),
+		SecondaryKeywordsSnapshot: stringPtrOrNil(req.KeywordSet.SecondaryKeywords),
+		SynonymsSnapshot:          stringPtrOrNil(req.KeywordSet.Synonyms),
+		ArticleContentSnapshot:    stringPtrOrNil(req.ArticleContent),
+		SummarySnapshot:           stringPtrOrNil(req.Summary),
+		DetailedInfoSnapshot:      stringPtrOrNil(req.DetailedInformation),
+		ImageMetadataSnapshot:     imageMetadataJSON,
+		KeywordDensitySnapshot:    &keywordDensity,
+		WordCountSnapshot:         &wordCount,
+		InternalLinksSnapshot:     &internalLinks,
+		OutboundLinksSnapshot:     &outboundLinks,
+		ChecklistChanges:          checklistJSON,
+		Recommendations:           recommendationsJSON,
 	}
 
 	return tx.Create(&history).Error
+}
+
+func buildImageSnapshots(images []service.ImportedImage) []dto.ReviewImageMetadataDTO {
+	snapshots := make([]dto.ReviewImageMetadataDTO, 0, len(images))
+	for index, image := range images {
+		snapshots = append(snapshots, dto.ReviewImageMetadataDTO{
+			ID:          strings.TrimSpace(image.ID),
+			Name:        strings.TrimSpace(image.Name),
+			MimeType:    strings.TrimSpace(image.MimeType),
+			DataURL:     strings.TrimSpace(image.DataURL),
+			AltText:     strings.TrimSpace(image.AltText),
+			Title:       strings.TrimSpace(image.Title),
+			Caption:     strings.TrimSpace(image.Caption),
+			Description: strings.TrimSpace(image.Description),
+			SortOrder:   index,
+		})
+	}
+
+	return snapshots
 }
 
 func upsertReviewSummary(tx *gorm.DB, articleID int, reviewID string, result service.ReviewResult) error {
