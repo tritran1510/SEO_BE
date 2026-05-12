@@ -15,13 +15,17 @@ var DB *gorm.DB
 func InitDB(cfg *config.Config) error {
 	dsn := cfg.Database.URL
 	if dsn == "" {
-		dsn = fmt.Sprintf("host=%s port=%s user=%s password=%s dbname=%s sslmode=disable",
+		dsn = fmt.Sprintf("host=%s port=%s user=%s password=%s dbname=%s sslmode=%s",
 			cfg.Database.Host,
 			cfg.Database.Port,
 			cfg.Database.User,
 			cfg.Database.Password,
 			cfg.Database.DBName,
+			cfg.Database.SSLMode,
 		)
+		if cfg.Database.ChannelBinding != "" {
+			dsn += fmt.Sprintf(" channel_binding=%s", cfg.Database.ChannelBinding)
+		}
 	}
 
 	db, err := gorm.Open(postgres.Open(dsn), &gorm.Config{})

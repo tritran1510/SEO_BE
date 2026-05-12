@@ -12,12 +12,14 @@ type Config struct {
 }
 
 type DatabaseConfig struct {
-	URL      string
-	Host     string
-	Port     string
-	User     string
-	Password string
-	DBName   string
+	URL            string
+	Host           string
+	Port           string
+	User           string
+	Password       string
+	DBName         string
+	SSLMode        string
+	ChannelBinding string
 }
 
 type ServerConfig struct {
@@ -64,16 +66,25 @@ func Load() *Config {
 		dbName = "seo_db"
 	}
 
+	dbSSLMode := os.Getenv("DB_SSLMODE")
+	if dbSSLMode == "" {
+		dbSSLMode = "disable"
+	}
+
+	dbChannelBinding := os.Getenv("DB_CHANNEL_BINDING")
+
 	return &Config{
 		Host: host,
 		Port: port,
 		Database: DatabaseConfig{
-			URL:      dbURL,
-			Host:     dbHost,
-			Port:     dbPort,
-			User:     dbUser,
-			Password: dbPassword,
-			DBName:   dbName,
+			URL:            dbURL,
+			Host:           dbHost,
+			Port:           dbPort,
+			User:           dbUser,
+			Password:       dbPassword,
+			DBName:         dbName,
+			SSLMode:        dbSSLMode,
+			ChannelBinding: dbChannelBinding,
 		},
 		Server: ServerConfig{
 			ReadTimeout:  15,
